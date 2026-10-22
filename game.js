@@ -15,6 +15,7 @@
     small: { r: 14, hp: 1, speed: 2.2, points: 100, color: "#ff6b6b", shoots: false },
     shooter: { r: 18, hp: 3, speed: 1.4, points: 300, color: "#ffa94d", shoots: true },
     big: { r: 28, hp: 10, speed: 0.8, points: 1000, color: "#cc5de8", shoots: true },
+    dasher: { r: 16, hp: 2, speed: 1.6, points: 500, color: "#69db7c", shoots: false },
   };
 
   const player = { x: W / 2, y: H - 80, r: 14, speed: 5, cooldown: 0, invincible: 0 };
@@ -85,7 +86,8 @@
     const roll = Math.random();
     let type = "small";
     if (wave >= 3 && roll < 0.08) type = "big";
-    else if (wave >= 2 && roll < 0.35) type = "shooter";
+    else if (wave >= 2 && roll < 0.2) type = "dasher";
+    else if (wave >= 2 && roll < 0.45) type = "shooter";
 
     const t = ENEMY_TYPES[type];
     enemies.push({
@@ -97,7 +99,37 @@
       phase: Math.random() * Math.PI * 2,
       fireTimer: 60 + Math.random() * 90,
       flash: 0,
+      // 以下は突進型だけが使う
+      mode: "enter",
+      stopY: 60 + Math.random() * 120,
+      aimTimer: 0,
+      angle: Math.PI / 2,
+      dx: 0,
+      dy: 0,
     });
+  }
+
+  // 突進型: 降りてくる → 止まって自機を狙う → 狙った方向へ一直線に突っ込む
+  function updateDasher(e) {
+    if (e.mode === "enter") {
+      e.y += e.speed;
+      if (e.y >= e.stopY) {
+        e.mode = "aim";
+        e.aimTimer = 50;
+      }
+    } else if (e.mode === "aim") {
+      e.angle = Math.atan2(player.y - e.y, player.x - e.x);
+      e.aimTimer--;
+      if (e.aimTimer <= 0) {
+        const speed = 7 + wave * 0.3;
+        e.dx = Math.cos(e.angle) * speed;
+        e.dy = Math.sin(e.angle) * speed;
+        e.mode = "dash";
+      }
+    } else {
+      e.x += e.dx;
+      e.y += e.dy;
+    }
   }
 
   function shoot() {
@@ -203,9 +235,13 @@
     }
 
     for (const e of enemies) {
-      e.phase += 0.03;
-      e.y += e.speed;
-      e.x += Math.sin(e.phase) * 1.2;
+      if (e.type === "dasher") {
+        updateDasher(e);
+      } else {
+        e.phase += 0.03;
+        e.y += e.speed;
+        e.x += Math.sin(e.phase) * 1.2;
+      }
       if (e.flash > 0) e.flash--;
 
       if (e.shoots) {
@@ -264,7 +300,10 @@
     const inside = (o) => !o.dead && o.x > -40 && o.x < W + 40 && o.y > -40 && o.y < H + 40;
     bullets = bullets.filter(inside);
     enemyBullets = enemyBullets.filter(inside);
-    enemies = enemies.filter((e) => e.hp > 0 && e.y < H + e.r);
+    // 突進型は横や上にも飛んでいくので、画面の外に出たら消す
+    enemies = enemies.filter(
+      (e) => e.hp > 0 && e.y < H + e.r && e.y > -e.r * 3 && e.x > -e.r && e.x < W + e.r
+    );
     particles = particles.filter((p) => p.life > 0);
   }
 
@@ -309,6 +348,27 @@
       ctx.lineTo(e.x + e.r, e.y);
       ctx.lineTo(e.x, e.y - e.r);
       ctx.lineTo(e.x - e.r, e.y);
+      ctx.closePath();
+    } else if (e.type === "dasher") {
+      // 狙っている間は突進する方向に予告線を出す
+      if (e.mode === "aim") {
+        ctx.strokeStyle = "rgba(105, 219, 124, 0.45)";
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y);
+        ctx.lineTo(e.x + Math.cos(e.angle) * H, e.y + Math.sin(e.angle) * H);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+      }
+      // 進む方向に向けた矢じり形
+      const cos = Math.cos(e.angle);
+      const sin = Math.sin(e.angle);
+      const point = (f, s) => ctx.lineTo(e.x + cos * f - sin * s, e.y + sin * f + cos * s);
+      point(e.r, 0);
+      point(-e.r, e.r * 0.8);
+      point(-e.r * 0.4, 0);
+      point(-e.r, -e.r * 0.8);
       ctx.closePath();
     } else {
       for (let i = 0; i < 6; i++) {
